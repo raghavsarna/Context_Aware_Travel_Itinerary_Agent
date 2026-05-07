@@ -1,0 +1,64 @@
+\documentclass[10pt]{article}
+\usepackage[margin=0.9in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage{listings}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+\setlength{\parindent}{1em}
+\setlength{\parskip}{0pt}
+
+\title{Context-Aware Travel Itinerary Architect\\\large Multi-Step LLM Agent Report}
+\author{Raghav Sarna}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Problem statement}
+Planning a short trip sounds simple until a user specifies concrete preferences (budget, interests, pace, constraints) and the plan must remain consistent with real-world conditions like weather. A single LLM prompt typically produces a plausible itinerary, but it tends to (i) hallucinate current weather or ``top places'', (ii) miss hard constraints when the prompt becomes long, and (iii) provide an answer that is difficult to programmatically validate or refine.
+
+This project builds a goal-driven travel agent that decomposes itinerary planning into a chained sequence of sub-tasks. Each sub-task is handled by a dedicated LLM call or a real external tool call, and the intermediate artifacts are accumulated in shared state. This design makes the dependency between steps explicit: extraction produces a structured preference schema, tool calls ground the plan in retrieved data, ranking produces a curated candidate set, drafting converts candidates into a day plan, and later steps critique and refine the plan. The result is a structured output (JSON + Markdown) that a user can act on and that can be inspected step-by-step during a live demo.
+
+\section{Chain design (what each step does and why it is separate)}
+The agent is implemented as a modular pipeline in Python with an explicit, traceable data flow through a single \texttt{state} dictionary. The main entrypoint (\texttt{travel\_agent.py}) accepts a natural-language trip description via the terminal and orchestrates the following steps.
+
+\textbf{Step 1 (LLM: preference extraction).} The first LLM call converts raw user text into a strict JSON schema (destination, duration, budget, interests, constraints, travel style, optional start date). This separation matters because later steps require typed fields rather than free-form text; it also enables robust fallbacks when JSON parsing fails.
+
+\textbf{Step 2 (Tools: weather + places retrieval).} External APIs fetch information the LLM should not invent: a short-range forecast (OpenWeatherMap) and candidate attractions (Serper). Downstream steps consume these retrieved artifacts as inputs. Tool failures (missing keys, rate limits) return graceful fallbacks so the chain still runs end-to-end.
+
+\textbf{Step 3 (LLM: filtering and ranking).} Using preferences + retrieved candidates, the LLM categorizes places into \texttt{must\_visit}, \texttt{optional}, and \texttt{avoid} with a short reasoning summary. This is intentionally separate from drafting: selection/justification is a different task than sequencing.
+
+\textbf{Step 4 (LLM: itinerary drafting).} The agent converts ranked places into a day-by-day JSON plan (\texttt{"Day 1"}, \texttt{"Day 2"}, \ldots) with 4--6 activities per day including meals and transitions.
+
+\textbf{Step 5 (LLM: weather-aware optimization).} The LLM refines timing based only on the retrieved forecast and is explicitly forbidden from distance/geography optimization (a common hallucination mode). It outputs per-day activities plus a weather note.
+
+\textbf{Step 6 (LLM: critique and refinement).} A final reviewer pass checks for overpacked days, missing meals, repetition, and preference mismatches, then returns a refined itinerary along with issues and the changes applied.
+
+\section{Tool integration}
+The pipeline integrates two external tools in Step~2. OpenWeatherMap provides a 5-day/3-hour forecast that is summarized into per-day descriptions and average temperatures. Serper.dev provides a lightweight search API for ``top places'' queries conditioned on user interests. Tool outputs are inserted verbatim (as JSON) into later prompts, making grounding explicit and demo-time inspection straightforward.
+
+\section{Limitations and failure modes}
+The chain is robust to partial failures, but several limitations remain. LLM JSON is not guaranteed; the implementation uses tolerant parsing plus fallbacks, but fallbacks can cascade into weaker downstream outputs. Tool calls can fail due to missing keys, quotas, or restricted accounts (e.g., Groq \texttt{organization\_restricted}); the agent logs these and continues. Finally, geography/travel-time optimization is intentionally omitted to avoid hallucinating distances, so the itinerary is plausible rather than route-optimal.
+
+\section{Reflection (what I learned and what I would improve)}
+The main insight is that strict structure at every interface makes LLM pipelines debuggable: fixed schemas reduce ambiguity and contain failures. Tool grounding also changes the task from ``generate facts'' to ``reason over evidence,'' which is more reliable. Next, I would add lightweight validators (e.g., meals per day, day-count checks) and optional deterministic routing tools while keeping the ``no hallucinated distances'' constraint, plus persistent logging of intermediate state for demo-time inspection.
+
+\section*{References}
+OpenWeatherMap API documentation: \url{https://openweathermap.org/forecast5}.\\
+Serper.dev Search API: \url{https://serper.dev/}.\\
+Groq API (OpenAI-compatible endpoint): \url{https://console.groq.com/docs}.
+
+\clearpage
+\appendix
+\section{Prompt Design Appendix}
+\input{prompt_design_appendix_body}
+\end{document}

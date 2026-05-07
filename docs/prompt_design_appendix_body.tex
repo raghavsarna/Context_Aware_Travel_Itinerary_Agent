@@ -1,0 +1,116 @@
+\section{Overview}
+This appendix supports the Prompt Design deliverable. It lists the full system and user prompts for each LLM step in the chain and explains why the prompts are shaped the way they are, i.e., which constraints they impose and how the next step depends on that structure.
+
+All prompts below are implemented directly in the repository under \texttt{steps/}. The agent uses the Groq OpenAI-compatible endpoint for all LLM calls.
+
+\section{Step 1: Intent \& constraint extraction}
+\textbf{File:} \texttt{steps/step1\_extract.py}
+
+\textbf{System prompt (verbatim):}
+\begin{lstlisting}[basicstyle=\ttfamily\small, breaklines=true, frame=single]
+You are a travel intent parser. Extract structured travel preferences from user input.
+Return ONLY a valid JSON object with these exact keys:
+{
+  "destination": string,
+  "duration_days": integer,
+  "budget": "low" | "medium" | "high",
+  "interests": [list of strings],
+  "constraints": [list of strings],
+  "travel_style": string,
+  "start_date": string or null
+}
+No explanation. No markdown. Only the JSON object.
+\end{lstlisting}
+
+\textbf{User prompt (template):} \texttt{Extract travel preferences from this input: <raw\_input>}
+
+\textbf{Why this shape works:} This prompt forces a fixed schema that is easy to validate and consume downstream. Steps 2--6 depend on stable fields like \texttt{destination} and \texttt{duration\_days}. Without a strict schema, later steps would require fragile string parsing.
+
+\section{Step 3: Filtering \& ranking}
+\textbf{File:} \texttt{steps/step3\_rank.py}
+
+\textbf{System prompt (verbatim):}
+\begin{lstlisting}[basicstyle=\ttfamily\small, breaklines=true, frame=single]
+You are a travel advisor. Given user preferences and a raw list of places, categorize them.
+Return ONLY a valid JSON object with this structure:
+{
+  "must_visit": [list of place names with one-line reason each as "name: reason"],
+  "optional": [list of place names],
+  "avoid": [list of place names with reason],
+  "reasoning_summary": "2-3 sentence explanation of your filtering logic"
+}
+No markdown. No extra text. Only JSON.
+\end{lstlisting}
+
+\textbf{User prompt (template):} The prompt embeds JSON dumps of:
+(1) \texttt{parsed\_preferences} from Step 1, (2) \texttt{external\_data.places} from Step 2, and (3) \texttt{external\_data.weather} from Step 2.
+
+\textbf{Why this shape works:} Step 4 should draft from a curated set, not raw search results. Returning categorized lists makes that dependency explicit and prevents Step 4 from ``rediscovering'' candidates.
+
+\section{Step 4: Itinerary drafting}
+\textbf{File:} \texttt{steps/step4\_itinerary.py}
+
+\textbf{System prompt (verbatim):}
+\begin{lstlisting}[basicstyle=\ttfamily\small, breaklines=true, frame=single]
+You are a travel planner. Create a detailed day-by-day itinerary.
+Return ONLY a valid JSON object where keys are "Day 1", "Day 2", etc., each containing a list of activity strings.
+Include arrival/departure logistics, meals, and transitions. Each day should have 4-6 activities.
+No markdown. No extra text. Only JSON.
+Example format:
+{
+  "Day 1": ["Arrive at airport", "Check in hotel", "Lunch at local restaurant", "Visit beach", "Dinner"],
+  "Day 2": ["Morning temple visit", "Lunch", "Afternoon market", "Evening show"]
+}
+\end{lstlisting}
+
+\textbf{User prompt (template):} The prompt includes destination, number of days, user preferences, and the ranked must/optional/avoid lists from Step 3.
+
+\textbf{Why this shape works:} JSON-by-day is easily post-processed into both a machine-readable artifact (\texttt{output.json}) and a human-friendly one (\texttt{output.md}). The ``4--6 activities + meals'' constraint improves completeness.
+
+\section{Step 5: Weather-aware optimization (no geography hallucination)}
+\textbf{File:} \texttt{steps/step5\_optimize.py}
+
+\textbf{System prompt (verbatim):}
+\begin{lstlisting}[basicstyle=\ttfamily\small, breaklines=true, frame=single]
+You are a weather-aware travel optimizer. Your ONLY job is to adjust activity timing based on weather.
+Rules you MUST follow:
+1. Do NOT rearrange activities based on geography or distances -- you don't know these.
+2. ONLY shift or swap activities based on weather conditions (heat, rain, humidity, wind).
+3. Prefer outdoor activities during mild/pleasant weather.
+4. Move outdoor activities indoors or reschedule if weather is harsh.
+5. Add brief weather notes to each day.
+Return ONLY a valid JSON object with keys "Day 1", "Day 2", etc.
+Each day value is an object: {"activities": [list of strings], "weather_note": string}
+No markdown. No extra text. Only JSON.
+\end{lstlisting}
+
+\textbf{User prompt (template):} The prompt embeds the draft itinerary (Step 4) and the retrieved weather JSON (Step 2).
+
+\textbf{Why this shape works:} This prompt is intentionally restrictive. In testing, unconstrained ``optimization'' prompts frequently cause LLMs to invent neighborhood clusters or travel-time reductions. The explicit prohibitions reduce that failure mode and keep the optimization grounded in tool data.
+
+\section{Step 6: Critique \& refinement}
+\textbf{File:} \texttt{steps/step6\_critique.py}
+
+\textbf{System prompt (verbatim):}
+\begin{lstlisting}[basicstyle=\ttfamily\small, breaklines=true, frame=single]
+You are a critical travel itinerary reviewer. Evaluate the itinerary and produce a refined version.
+Return ONLY a valid JSON object with this exact structure:
+{
+  "issues": [list of specific problems found],
+  "suggestions": [list of concrete improvements],
+  "final_changes": [list of changes actually made],
+  "final_itinerary": {
+    "Day 1": {"activities": [...], "weather_note": "..."},
+    "Day 2": {"activities": [...], "weather_note": "..."}
+  },
+  "summary": "One paragraph summary of the complete trip"
+}
+No markdown. No extra text. Only JSON.
+\end{lstlisting}
+
+\textbf{User prompt (template):} The prompt includes the optimized itinerary plus the original structured preferences and explicitly asks to check for overpacked days, missing meals, repeated activity types, and mismatches.
+
+\textbf{Why this shape works:} Splitting critique from drafting makes the model behave more like an editor. The explicit \texttt{final\_changes} field creates an audit trail that is helpful for the live demo.
+
+\section{Prompt iteration example (change after testing)}
+Early testing showed that a weaker Step 5 optimizer prompt often performed ``geographic'' clustering (e.g., grouping places by areas it assumed were nearby) or invented travel-time savings, which the agent cannot validate. The Step 5 system prompt was tightened into an explicit rule list that forbids distance-based rearrangement and restricts changes to weather-based timing. This iteration reduced hallucinated geography and made the chain more defensible: optimization is grounded in retrieved forecast data rather than in unstated assumptions.

@@ -38,6 +38,26 @@ python travel_agent.py
 
 When prompted, paste your trip request (multi-line supported; press **Enter on an empty line** to finish).
 
+## Assignment Requirements (Checklist)
+
+This project is built to match the “Multi-Step LLM Agent” assignment requirements:
+
+- **Multi-step chaining (≥4 sequential LLM calls)**
+  - This agent uses **5 sequential Groq LLM calls**: Steps **1, 3, 4, 5, 6**.
+  - Each step consumes structured outputs from prior steps through a shared `state` object.
+- **At least one tool call (non-LLM)**
+  - Step **2** calls external APIs (OpenWeatherMap + Serper) to fetch real data.
+- **Shared state across the chain**
+  - A single `state` dictionary is created and passed through every step.
+- **Structured final output**
+  - Writes **`output.json`** and **`output.md`** (a user-actionable itinerary).
+- **Modular code (not monolithic)**
+  - Each step is a separate module under `steps/`.
+- **No agent frameworks**
+  - No LangChain / LlamaIndex / agent frameworks are used; chaining is implemented directly in Python.
+
+Note: the assignment handout mentions “Grok API”; this repo uses the **Groq** OpenAI-compatible chat completions endpoint.
+
 ## What input should look like?
 
 The agent works best if you describe:
@@ -65,6 +85,23 @@ Example:
 | 5 | LLM | Optimize timing using weather data (no geography hallucination) |
 | 6 | LLM | Self-critique and produce final refined itinerary |
 
+## How chaining works (data flow)
+
+All intermediate artifacts are accumulated in a shared `state` dict.
+
+- **Step 1 → `parsed_preferences`**
+  - Extracts destination, duration, budget, interests, constraints, style, start date.
+- **Step 2 → `external_data`**
+  - Adds `{destination, weather, places}` from real APIs.
+- **Step 3 → `ranked_places`**
+  - Filters/labels “must_visit / optional / avoid” using `parsed_preferences + external_data`.
+- **Step 4 → `itinerary_draft`**
+  - Drafts a day-by-day plan conditioned on `ranked_places`.
+- **Step 5 → `optimized_itinerary`**
+  - Weather-aware timing changes using `external_data.weather`.
+- **Step 6 → `critique` + `final_itinerary`**
+  - Reviews and refines to produce the final structured itinerary.
+
 ## Project Structure
 
 ```text
@@ -83,8 +120,8 @@ Example:
 │  ├─ step5_optimize.py
 │  └─ step6_critique.py
 └─ tools/                   # external tool calls
-	├─ weather_tool.py
-	└─ places_tool.py
+  ├─ weather_tool.py
+  └─ places_tool.py
 ```
 
 ## Configuration
@@ -131,6 +168,16 @@ Running the agent generates:
 }
 ```
 
+## Prompt transparency (for the Prompt Design deliverable)
+
+Each LLM step contains its full **system prompt** and **user prompt** directly in code.
+
+- Step 1 prompts: `steps/step1_extract.py`
+- Step 3 prompts: `steps/step3_rank.py`
+- Step 4 prompts: `steps/step4_itinerary.py`
+- Step 5 prompts: `steps/step5_optimize.py`
+- Step 6 prompts: `steps/step6_critique.py`
+
 ## Failure Handling & Troubleshooting
 
 The pipeline is designed to **never crash** if an API call fails.
@@ -152,6 +199,12 @@ Common fixes:
 
 3) **Serper returns 401/403**
 	- Check your `SERPER_API_KEY` and plan limits.
+
+## Limitations (honest failure modes)
+
+- If LLM output is not valid JSON, the code falls back to defaults to keep the chain running.
+- Geography/travel-time optimization is intentionally avoided (LLMs can hallucinate distances).
+- Tool APIs can be rate-limited or return sparse results; the chain continues with fallbacks.
 
 ## Design Decision (No Geography Hallucinations)
 
