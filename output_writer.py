@@ -61,10 +61,8 @@ def save_output(state: dict, output_dir: str | None = None) -> None:
             md_lines.append(f"{i}. {act}")
         md_lines.append("")
 
-    md_lines.append("---\n## Agent Notes")
-    md_lines.append(f"- Issues found in critique: {', '.join(critique.get('issues', ['None']))}")
-    md_lines.append(f"- Final changes: {', '.join(critique.get('final_changes', ['None']))}")
-    md_lines.append("\n*Weather data sourced from OpenWeatherMap API. Places sourced from Serper search API.*")
+    md_lines.append("---")
+    md_lines.append("*Weather data sourced from OpenWeatherMap API. Places sourced from Serper search API.*")
 
     with open(md_path, "w", encoding="utf-8") as f:
         f.write("\n".join(md_lines))

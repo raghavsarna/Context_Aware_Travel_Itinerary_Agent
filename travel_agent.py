@@ -11,16 +11,11 @@ Pipeline
 
 Environment configuration
 -------------------------
-Secrets MUST NOT be hardcoded. Configure API keys via environment variables or a local
-`.env` file (loaded automatically).
 
 Required (depending on which steps you want to work):
 - GROQ_API_KEY: Groq API key for LLM steps (1,3,4,5,6)
 - OPENWEATHER_API_KEY: OpenWeatherMap API key for weather tool call (step 2)
 - SERPER_API_KEY: Serper.dev API key for places tool call (step 2)
-
-Optional:
-- GROQ_MODEL: Groq model name (default: llama-3.3-70b-versatile)
 
 State structure
 ---------------
@@ -93,10 +88,38 @@ def run_agent(user_input: str) -> dict:
 
 
 if __name__ == "__main__":
-    sample_input = (
+    example_input = (
         "I want to visit Goa for 3 days next month. I'm on a medium budget and love beaches, "
         "nightlife, and local food. I prefer relaxed mornings and don't want to travel too much "
         "between locations. Evenings outdoors are a must."
     )
 
-    final_state = run_agent(sample_input)
+    print("\nDescribe your trip in natural language. Include as many as you can:")
+    print("- Destination (city/country)")
+    print("- Duration (number of days)")
+    print("- Budget (low/medium/high)")
+    print("- Interests (e.g., museums, beaches, hiking, nightlife, food)")
+    print("- Constraints (e.g., avoid long travel, wheelchair-friendly, no early mornings)")
+    print("- Travel style (relaxed, packed, luxury, backpacking, family-friendly)")
+    print("- Dates (optional)")
+    print("\nExample:")
+    print(f"  {example_input}\n")
+    print("Paste your request. For multi-line input, press Enter on an empty line to finish.")
+
+    lines: list[str] = []
+    while True:
+        try:
+            line = input("> ")
+        except EOFError:
+            break
+
+        if not line.strip():
+            break
+        lines.append(line)
+
+    user_input = "\n".join(lines).strip() if lines else ""
+    if not user_input:
+        print("\nNo input provided — using the example prompt.\n")
+        user_input = example_input
+
+    final_state = run_agent(user_input)
